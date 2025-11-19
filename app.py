@@ -31,14 +31,9 @@ def load_data():
 
 def add_subscription(nom, prix, periodicite, date):
     sheet = get_connection()
-    
-    # --- LA CORRECTION EST ICI ---
-    # 1. On prend le prix (ex: 2.99)
-    # 2. On le formate avec 2 décimales et on remplace le POINT par une VIRGULE
-    prix_fr = f"{prix:.2f}".replace('.', ',') # Devient "2,99" (Texte)
-    
-    # 3. On envoie avec l'option 'USER_ENTERED' pour que Google Sheet comprenne la virgule
-    sheet.append_row([nom, prix_fr, periodicite, str(date)], value_input_option='USER_ENTERED')
+    # PLUS DE BIDOUILLE : On envoie le chiffre pur.
+    # Comme ton Sheet est en mode US, il va adorer le point (2.99).
+    sheet.append_row([nom, float(prix), periodicite, str(date)])
 
 def delete_subscription(nom_to_delete):
     sheet = get_connection()
@@ -68,16 +63,13 @@ with st.sidebar:
     if st.button("Sauvegarder"):
         if name:
             add_subscription(name, price, periodicity, date)
-            st.success("Sauvegardé avec virgule !")
+            st.success("Sauvegardé !")
             st.rerun()
 
 # --- TABLEAU DE BORD ---
 if not df.empty:
-    # Nettoyage lecture
-    df["Prix"] = df["Prix"].astype(str) # Tout en texte d'abord
-    df["Prix"] = df["Prix"].str.replace(',', '.', regex=False) # On remet des points pour Python
-    # On nettoie les espaces invisibles (le vrai piège parfois)
-    df["Prix"] = df["Prix"].str.replace(r'\s+', '', regex=True) 
+    # Nettoyage simple (Lecture)
+    # On s'assure juste que c'est bien un chiffre
     df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
     
     df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
