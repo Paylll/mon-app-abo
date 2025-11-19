@@ -11,18 +11,14 @@ SCOPES = [
 ]
 
 def get_connection():
-    # Récupération des secrets
     if "gcp_service_account" not in st.secrets:
-        st.error("Les secrets ne sont pas configurés correctement.")
+        st.error("Les secrets ne sont pas configurés.")
         st.stop()
         
     creds_dict = dict(st.secrets["gcp_service_account"])
-    
-    # Connexion
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
     
-    # Ouverture du fichier par ID (La méthode la plus fiable)
     try:
         # -------------------------------------------------------
         # COLLE TON ID CI-DESSOUS À LA PLACE DE "METS_TON_ID_ICI"
@@ -37,13 +33,16 @@ def get_connection():
 def load_data():
     sheet = get_connection()
     data = sheet.get_all_records()
+    # Si vide, on renvoie un tableau vide avec les bonnes colonnes
     if not data:
         return pd.DataFrame(columns=["Nom", "Prix", "Périodicité", "Prochaine échéance"])
     return pd.DataFrame(data)
 
 def add_subscription(nom, prix, periodicite, date):
     sheet = get_connection()
-    sheet.append_row([nom, prix, periodicite, str(date)])
+    # CORRECTION ICI : On transforme le prix 2.99 en "2,99" pour Google Sheet France
+    prix_fr = str(prix).replace('.', ',')
+    sheet.append_row([nom, prix_fr, periodicite, str(date)])
 
 def delete_subscription(nom_to_delete):
     sheet = get_connection()
@@ -68,14 +67,15 @@ except Exception as e:
 with st.sidebar:
     st.header("➕ Ajouter")
     name = st.text_input("Nom du service")
-    price = st.number_input("Prix (€)", min_value=0.0, step=0.1, format="%.2f")
+    # format="%.2f" permet de saisir des décimales
+    price = st.number_input("Prix (€)", min_value=0.0, step=0.01, format="%.2f")
     periodicity = st.selectbox("Périodicité", ["Mensuel", "Annuel"])
     date = st.date_input("Prochaine date")
     
     if st.button("Sauvegarder dans le Cloud"):
         if name:
             add_subscription(name, price, periodicity, date)
-            st.success("Enregistré sur Google Drive !")
+            st.success("Enregistré (avec virgule) !")
             st.rerun()
         else:
             st.warning("Le nom est obligatoire.")
@@ -83,15 +83,19 @@ with st.sidebar:
 # --- TABLEAU DE BORD ---
 if not df.empty:
     if "Prix" in df.columns and "Prochaine échéance" in df.columns:
-        try:
-            df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
-            df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
-        except:
-            st.warning("Format de date ou prix incorrect dans Excel.")
+        
+        # --- NETTOYAGE DES DONNÉES (Lecture) ---
+        # 1. On remplace les virgules par des points pour que Python puisse calculer
+        df["Prix"] = df["Prix"].astype(str).str.replace(',', '.')
+        # 2. On convertit en nombre
+        df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
+        
+        # 3. Gestion des dates
+        df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
 
         today = datetime.now().date()
 
-        # Calculs
+        # Calculs financiers
         total_mensuel = 0
         for _, row in df.iterrows():
             p = row["Prix"]
@@ -106,7 +110,7 @@ if not df.empty:
         
         st.markdown("---")
 
-        # Alertes
+        # Alertes (7 jours)
         st.subheader("⚠️ À venir (7 jours)")
         upcoming = df[(df["Prochaine échéance"] >= today) & 
                       (df["Prochaine échéance"] <= today + timedelta(days=7))]
