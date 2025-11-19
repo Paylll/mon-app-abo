@@ -31,9 +31,14 @@ def load_data():
 
 def add_subscription(nom, prix, periodicite, date):
     sheet = get_connection()
-    # MODIFICATION MAJEURE : On envoie un FLOAT (nombre) direct, pas de guillemets
-    # Google Sheet se débrouillera pour mettre une virgule ou un point selon sa langue
-    sheet.append_row([nom, float(prix), periodicite, str(date)])
+    
+    # --- LA CORRECTION EST ICI ---
+    # 1. On prend le prix (ex: 2.99)
+    # 2. On le formate avec 2 décimales et on remplace le POINT par une VIRGULE
+    prix_fr = f"{prix:.2f}".replace('.', ',') # Devient "2,99" (Texte)
+    
+    # 3. On envoie avec l'option 'USER_ENTERED' pour que Google Sheet comprenne la virgule
+    sheet.append_row([nom, prix_fr, periodicite, str(date)], value_input_option='USER_ENTERED')
 
 def delete_subscription(nom_to_delete):
     sheet = get_connection()
@@ -56,7 +61,6 @@ except:
 with st.sidebar:
     st.header("➕ Ajouter")
     name = st.text_input("Nom")
-    # Ici on demande un nombre décimal
     price = st.number_input("Prix (€)", min_value=0.0, step=0.01, format="%.2f")
     periodicity = st.selectbox("Périodicité", ["Mensuel", "Annuel"])
     date = st.date_input("Prochaine date")
@@ -64,17 +68,16 @@ with st.sidebar:
     if st.button("Sauvegarder"):
         if name:
             add_subscription(name, price, periodicity, date)
-            st.success("Sauvegardé !")
+            st.success("Sauvegardé avec virgule !")
             st.rerun()
 
 # --- TABLEAU DE BORD ---
 if not df.empty:
-    # Nettoyage ultra-robuste du prix pour l'affichage
-    # 1. On force en texte
-    df["Prix"] = df["Prix"].astype(str)
-    # 2. On remplace les virgules par des points pour Python
-    df["Prix"] = df["Prix"].str.replace(',', '.', regex=False)
-    # 3. On convertit en nombre
+    # Nettoyage lecture
+    df["Prix"] = df["Prix"].astype(str) # Tout en texte d'abord
+    df["Prix"] = df["Prix"].str.replace(',', '.', regex=False) # On remet des points pour Python
+    # On nettoie les espaces invisibles (le vrai piège parfois)
+    df["Prix"] = df["Prix"].str.replace(r'\s+', '', regex=True) 
     df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
     
     df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
@@ -90,7 +93,7 @@ if not df.empty:
             
     col1, col2 = st.columns(2)
     col1.metric("Nombre", len(df))
-    col2.metric("Mensuel", f"{total:.2f} €") # Affiche toujours 2 décimales
+    col2.metric("Mensuel", f"{total:.2f} €")
     
     st.markdown("---")
     st.subheader("⚠️ Prochains 7 jours")
@@ -98,7 +101,6 @@ if not df.empty:
     
     if not upcoming.empty:
         for _, row in upcoming.iterrows():
-            # Affiche le prix proprement avec 2 décimales
             st.warning(f"**{row['Nom']}** : {row['Prix']:.2f} € le {row['Prochaine échéance']}")
     else:
         st.info("Rien à signaler.")
@@ -106,7 +108,6 @@ if not df.empty:
     st.markdown("---")
     st.dataframe(df)
     
-    # Suppression
     with st.expander("Supprimer"):
         to_del = st.selectbox("Quel abonnement ?", df["Nom"].unique())
         if st.button("Confirmer la suppression"):
