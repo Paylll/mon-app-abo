@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION GOOGLE SHEETS (NOUVELLE MÉTHODE) ---
+# --- CONFIGURATION GOOGLE SHEETS ---
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -18,18 +18,19 @@ def get_connection():
         
     creds_dict = dict(st.secrets["gcp_service_account"])
     
-    # Connexion moderne avec google-auth
+    # Connexion
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
     
-    # Ouverture du fichier
-    # Assure-toi que ton Google Sheet s'appelle bien "Mes Abonnements"
+    # Ouverture du fichier par ID (La méthode la plus fiable)
     try:
-        # Remplace l'ID ci-dessous par le tien !
-sheet = client.open_by_key("1LQrmrzx61KSOO1WnoArEXAXQ_idhF1RO__bFJH2LkcU").sheet1
+        # -------------------------------------------------------
+        # COLLE TON ID CI-DESSOUS À LA PLACE DE "METS_TON_ID_ICI"
+        # -------------------------------------------------------
+        sheet = client.open_by_key("1LQrmrzx61KSOO1WnoArEXAXQ_idhF1RO__bFJH2LkcU").sheet1
         return sheet
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.error("Impossible de trouver le fichier 'Mes Abonnements'. Vérifie le nom exact sur Google Drive.")
+    except Exception as e:
+        st.error(f"Erreur de connexion : {e}")
         st.stop()
 
 # --- FONCTIONS ---
@@ -46,9 +47,11 @@ def add_subscription(nom, prix, periodicite, date):
 
 def delete_subscription(nom_to_delete):
     sheet = get_connection()
-    # On cherche la cellule qui contient le nom
-    cell = sheet.find(nom_to_delete)
-    sheet.delete_rows(cell.row)
+    try:
+        cell = sheet.find(nom_to_delete)
+        sheet.delete_rows(cell.row)
+    except:
+        st.warning("Impossible de supprimer, ligne introuvable.")
 
 # --- INTERFACE ---
 st.set_page_config(page_title="Mes Abonnements", page_icon="💳")
@@ -58,7 +61,7 @@ st.title("💳 Suivi de mes Abonnements (Cloud)")
 try:
     df = load_data()
 except Exception as e:
-    st.error(f"Une erreur technique est survenue : {e}")
+    st.error(f"Erreur de chargement : {e}")
     st.stop()
 
 # --- SIDEBAR : AJOUT ---
@@ -79,14 +82,12 @@ with st.sidebar:
 
 # --- TABLEAU DE BORD ---
 if not df.empty:
-    # Nettoyage et conversion
-    # Si le fichier est vide ou mal formaté, on gère l'erreur
     if "Prix" in df.columns and "Prochaine échéance" in df.columns:
         try:
             df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
             df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
         except:
-            st.warning("Attention, certaines dates ou prix dans le fichier Excel sont mal écrits.")
+            st.warning("Format de date ou prix incorrect dans Excel.")
 
         today = datetime.now().date()
 
@@ -105,7 +106,7 @@ if not df.empty:
         
         st.markdown("---")
 
-        # Alertes (7 jours)
+        # Alertes
         st.subheader("⚠️ À venir (7 jours)")
         upcoming = df[(df["Prochaine échéance"] >= today) & 
                       (df["Prochaine échéance"] <= today + timedelta(days=7))]
@@ -131,7 +132,7 @@ if not df.empty:
                     st.success("Supprimé !")
                     st.rerun()
     else:
-        st.error("Les colonnes du fichier Google Sheet ne correspondent pas (Attendu : Nom, Prix, Périodicité, Prochaine échéance)")
+        st.error("Colonnes incorrectes dans Google Sheet.")
 
 else:
-    st.info("Aucun abonnement trouvé sur le Drive. Ajoutes-en un !")
+    st.info("Aucun abonnement trouvé. Ajoutes-en un !")
