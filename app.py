@@ -25,7 +25,8 @@ def get_connection():
     # Ouverture du fichier
     # Assure-toi que ton Google Sheet s'appelle bien "Mes Abonnements"
     try:
-        sheet = client.open("Mes Abonnements").sheet1
+        # Remplace l'ID ci-dessous par le tien !
+sheet = client.open_by_key("1LQrmrzx61KSOO1WnoArEXAXQ_idhF1RO__bFJH2LkcU").sheet1
         return sheet
     except gspread.exceptions.SpreadsheetNotFound:
         st.error("Impossible de trouver le fichier 'Mes Abonnements'. Vérifie le nom exact sur Google Drive.")
