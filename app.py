@@ -21,6 +21,19 @@ def get_connection():
         st.error(f"Erreur ID Google Sheet : {e}")
         st.stop()
 
+# --- FONCTION DE NETTOYAGE (La nouveauté) ---
+def nettoyer_prix(valeur):
+    """Transforme n'importe quoi (2,99 ou $2.99) en un vrai nombre (2.99)"""
+    valeur_str = str(valeur)
+    # On enlève les symboles qui gênent ($ et € et espaces)
+    valeur_str = valeur_str.replace('€', '').replace('$', '').replace(' ', '')
+    # On remplace la virgule par un point
+    valeur_str = valeur_str.replace(',', '.')
+    try:
+        return float(valeur_str)
+    except:
+        return 0.0
+
 # --- FONCTIONS ---
 def load_data():
     sheet = get_connection()
@@ -31,8 +44,7 @@ def load_data():
 
 def add_subscription(nom, prix, periodicite, date):
     sheet = get_connection()
-    # PLUS DE BIDOUILLE : On envoie le chiffre pur.
-    # Comme ton Sheet est en mode US, il va adorer le point (2.99).
+    # On envoie le chiffre brut
     sheet.append_row([nom, float(prix), periodicite, str(date)])
 
 def delete_subscription(nom_to_delete):
@@ -68,9 +80,9 @@ with st.sidebar:
 
 # --- TABLEAU DE BORD ---
 if not df.empty:
-    # Nettoyage simple (Lecture)
-    # On s'assure juste que c'est bien un chiffre
-    df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
+    # --- APPLICATION DU NETTOYAGE ---
+    # On applique la fonction nettoyer_prix sur toute la colonne Prix
+    df["Prix"] = df["Prix"].apply(nettoyer_prix)
     
     df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
     today = datetime.now().date()
