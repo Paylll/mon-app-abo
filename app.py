@@ -1,21 +1,35 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION GOOGLE SHEETS ---
-# On définit le périmètre (scope) des droits d'accès
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+# --- CONFIGURATION GOOGLE SHEETS (NOUVELLE MÉTHODE) ---
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
 def get_connection():
-    # Récupération des secrets depuis Streamlit Cloud
+    # Récupération des secrets
+    if "gcp_service_account" not in st.secrets:
+        st.error("Les secrets ne sont pas configurés correctement.")
+        st.stop()
+        
     creds_dict = dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+    
+    # Connexion moderne avec google-auth
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
-    # Ouvre le fichier Google Sheet par son nom
-    sheet = client.open("Mes Abonnements").sheet1 
-    return sheet
+    
+    # Ouverture du fichier
+    # Assure-toi que ton Google Sheet s'appelle bien "Mes Abonnements"
+    try:
+        sheet = client.open("Mes Abonnements").sheet1
+        return sheet
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("Impossible de trouver le fichier 'Mes Abonnements'. Vérifie le nom exact sur Google Drive.")
+        st.stop()
 
 # --- FONCTIONS ---
 def load_data():
@@ -27,23 +41,23 @@ def load_data():
 
 def add_subscription(nom, prix, periodicite, date):
     sheet = get_connection()
-    # Ajout d'une ligne dans le Google Sheet
     sheet.append_row([nom, prix, periodicite, str(date)])
 
-def delete_subscription(index_to_delete):
+def delete_subscription(nom_to_delete):
     sheet = get_connection()
-    # +2 car Google Sheet commence à 1 et la ligne 1 est le titre
-    sheet.delete_rows(index_to_delete + 2) 
+    # On cherche la cellule qui contient le nom
+    cell = sheet.find(nom_to_delete)
+    sheet.delete_rows(cell.row)
 
 # --- INTERFACE ---
 st.set_page_config(page_title="Mes Abonnements", page_icon="💳")
 st.title("💳 Suivi de mes Abonnements (Cloud)")
 
-# Chargement (peut prendre 1 ou 2 secondes car c'est en ligne)
+# Chargement des données
 try:
     df = load_data()
 except Exception as e:
-    st.error(f"Erreur de connexion : {e}")
+    st.error(f"Une erreur technique est survenue : {e}")
     st.stop()
 
 # --- SIDEBAR : AJOUT ---
@@ -55,56 +69,68 @@ with st.sidebar:
     date = st.date_input("Prochaine date")
     
     if st.button("Sauvegarder dans le Cloud"):
-        add_subscription(name, price, periodicity, date)
-        st.success("Enregistré sur Google Drive !")
-        st.rerun()
+        if name:
+            add_subscription(name, price, periodicity, date)
+            st.success("Enregistré sur Google Drive !")
+            st.rerun()
+        else:
+            st.warning("Le nom est obligatoire.")
 
 # --- TABLEAU DE BORD ---
 if not df.empty:
-    # Nettoyage des formats
-    df["Prix"] = pd.to_numeric(df["Prix"])
-    df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
-    today = datetime.now().date()
+    # Nettoyage et conversion
+    # Si le fichier est vide ou mal formaté, on gère l'erreur
+    if "Prix" in df.columns and "Prochaine échéance" in df.columns:
+        try:
+            df["Prix"] = pd.to_numeric(df["Prix"], errors='coerce').fillna(0)
+            df["Prochaine échéance"] = pd.to_datetime(df["Prochaine échéance"]).dt.date
+        except:
+            st.warning("Attention, certaines dates ou prix dans le fichier Excel sont mal écrits.")
 
-    # Calculs
-    total_mensuel = 0
-    for _, row in df.iterrows():
-        if row["Périodicité"] == "Mensuel":
-            total_mensuel += row["Prix"]
+        today = datetime.now().date()
+
+        # Calculs
+        total_mensuel = 0
+        for _, row in df.iterrows():
+            p = row["Prix"]
+            if row["Périodicité"] == "Mensuel":
+                total_mensuel += p
+            else:
+                total_mensuel += p / 12
+                
+        col1, col2 = st.columns(2)
+        col1.metric("Abonnements", len(df))
+        col2.metric("Coût Mensuel", f"{total_mensuel:.2f} €")
+        
+        st.markdown("---")
+
+        # Alertes (7 jours)
+        st.subheader("⚠️ À venir (7 jours)")
+        upcoming = df[(df["Prochaine échéance"] >= today) & 
+                      (df["Prochaine échéance"] <= today + timedelta(days=7))]
+        
+        if not upcoming.empty:
+            for _, row in upcoming.iterrows():
+                st.warning(f"**{row['Nom']}** : {row['Prix']}€ le {row['Prochaine échéance']}")
         else:
-            total_mensuel += row["Prix"] / 12
-            
-    col1, col2 = st.columns(2)
-    col1.metric("Abonnements", len(df))
-    col2.metric("Coût Mensuel", f"{total_mensuel:.2f} €")
-    
-    st.markdown("---")
+            st.info("Rien à signaler cette semaine.")
 
-    # Alertes (7 jours)
-    st.subheader("⚠️ À venir (7 jours)")
-    upcoming = df[(df["Prochaine échéance"] >= today) & 
-                  (df["Prochaine échéance"] <= today + timedelta(days=7))]
-    
-    if not upcoming.empty:
-        for _, row in upcoming.iterrows():
-            st.warning(f"**{row['Nom']}** : {row['Prix']}€ le {row['Prochaine échéance']}")
+        st.markdown("---")
+        st.subheader("📋 Liste complète")
+        st.dataframe(df)
+        
+        # Suppression
+        st.write("---")
+        with st.expander("Supprimer un abonnement"):
+            options = df["Nom"].tolist()
+            if options:
+                to_delete = st.selectbox("Choisir l'abonnement à supprimer", options)
+                if st.button("Supprimer définitivement"):
+                    delete_subscription(to_delete)
+                    st.success("Supprimé !")
+                    st.rerun()
     else:
-        st.info("Rien à signaler cette semaine.")
-
-    st.markdown("---")
-    st.subheader("📋 Liste complète")
-    st.dataframe(df)
-    
-    # Suppression simple
-    st.write("---")
-    with st.expander("Supprimer un abonnement"):
-        options = df["Nom"].tolist()
-        to_delete = st.selectbox("Choisir l'abonnement à supprimer", options)
-        if st.button("Supprimer définitivement"):
-            idx = df[df["Nom"] == to_delete].index[0]
-            delete_subscription(idx)
-            st.success("Supprimé !")
-            st.rerun()
+        st.error("Les colonnes du fichier Google Sheet ne correspondent pas (Attendu : Nom, Prix, Périodicité, Prochaine échéance)")
 
 else:
     st.info("Aucun abonnement trouvé sur le Drive. Ajoutes-en un !")
